@@ -43,18 +43,42 @@ CASH_BUFFER = 0.02              # Keep 2% in cash
 # GET CURRENT NASDAQ-100 LIST
 # ============================================================
 def get_nasdaq100_tickers():
+    """Get current Nasdaq-100 tickers from Wikipedia with proper headers"""
+    import requests
+    
     url = "https://en.wikipedia.org/wiki/Nasdaq-100"
-    tables = pd.read_html(url)
-    for table in tables:
-        if "Ticker" in table.columns or "Symbol" in table.columns:
-            col = "Ticker" if "Ticker" in table.columns else "Symbol"
-            tickers = table[col].astype(str).str.strip().str.upper().tolist()
-            tickers = [t for t in tickers if t.isalpha() or "." in t]
-            if len(tickers) > 80:
-                print(f"Loaded {len(tickers)} Nasdaq-100 tickers")
-                return tickers
-    # Fallback list if Wikipedia fails
-    return ["AAPL", "MSFT", "NVDA", "AMZN", "META", "GOOGL", "AVGO", "TSLA", "COST", "NFLX"]
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+    }
+    
+    try:
+        response = requests.get(url, headers=headers, timeout=10)
+        response.raise_for_status()
+        
+        tables = pd.read_html(response.text)
+        
+        for table in tables:
+            if "Ticker" in table.columns or "Symbol" in table.columns:
+                col = "Ticker" if "Ticker" in table.columns else "Symbol"
+                tickers = table[col].astype(str).str.strip().str.upper().tolist()
+                tickers = [t for t in tickers if t.isalpha() or "." in t]
+                if len(tickers) > 80:
+                    print(f"Loaded {len(tickers)} Nasdaq-100 tickers")
+                    return tickers
+    except Exception as e:
+        print(f"Could not load from Wikipedia: {e}")
+    
+    # Fallback list (major Nasdaq-100 stocks) if Wikipedia fails
+    print("Using fallback Nasdaq-100 list")
+    return [
+        "AAPL", "MSFT", "NVDA", "AMZN", "META", "GOOGL", "GOOG", "AVGO", "TSLA", "COST",
+        "NFLX", "AMD", "ADBE", "PEP", "CSCO", "INTC", "CMCSA", "INTU", "QCOM", "AMGN",
+        "HON", "TXN", "AMAT", "SBUX", "ISRG", "BKNG", "ADP", "GILD", "VRTX", "REGN",
+        "LRCX", "MDLZ", "ADI", "PANW", "KLAC", "SNPS", "CDNS", "MAR", "ORLY", "CTAS",
+        "FTNT", "NXPI", "AEP", "KDP", "CSX", "PCAR", "ROST", "FAST", "ODFL", "IDXX",
+        "BKR", "GEHC", "XEL", "WBD", "DDOG", "ZS", "TEAM", "CRWD", "TTD", "MDB"
+    ]
+
 
 # ============================================================
 # ALPACA CONNECTION
