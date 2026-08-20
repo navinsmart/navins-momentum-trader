@@ -160,13 +160,13 @@ def calculate_target_weights():
 # REBALANCE FUNCTION
 # ============================================================
 def rebalance():
-    print(f"\n[{datetime.now()}] Starting weekly rebalance...")
+   print(f"\n[{datetime.now()}] Starting weekly rebalance...")
     equity = get_account_equity()
     print(f"Account equity: ${equity:,.2f}")
 
     targets = calculate_target_weights()
     if not targets:
-        print("No targets generated. Exiting.")
+        print("No targets generated.")
         return
 
     print("\nTarget weights:")
@@ -177,49 +177,66 @@ def rebalance():
     all_symbols = list(set(list(targets.keys()) + list(current_positions.keys())))
     prices = get_latest_prices(all_symbols)
 
-    # Calculate target number of shares
-    target_shares = {}
+    # Calculate target dollar amount for each stock
+    target_dollars = {}
     for symbol, weight in targets.items():
-        price = prices.get(symbol, 0)
-        if price > 0:
-            target_shares[symbol] = int((equity * weight) / price)
+        target_dollars[symbol] = equity * weight
 
     # 1. Close positions that are no longer in the Top 10
     for symbol, qty in current_positions.items():
-        if symbol not in target_shares and abs(qty) > 0:
+        if symbol not in target_dollars and abs(qty) > 0:
             side = OrderSide.SELL if qty > 0 else OrderSide.BUY
             order = MarketOrderRequest(
                 symbol=symbol,
-                qty=abs(int(qty)),
+                qty=abs(qty),
                 side=side,
                 time_in_force=TimeInForce.DAY
             )
             trading_client.submit_order(order)
             print(f"Closing {symbol}")
 
-    time.sleep(3)
+    time.sleep(2)
 
-    # 2. Adjust the remaining positions
+    # 2. Adjust positions using fractional (notional) orders
     current_positions = get_current_positions()
-    for symbol, target_qty in target_shares.items():
+    for symbol, target_value in target_dollars.items():
         current_qty = current_positions.get(symbol, 0)
-        diff = target_qty - current_qty
+        current_price = prices.get(symbol, 0)
 
-        if abs(diff) < 1:
+        if current_price <= 0:
             continue
 
-        side = OrderSide.BUY if diff > 0 else OrderSide.SELL
-        order = MarketOrderRequest(
-            symbol=symbol,
-            qty=abs(int(diff)),
-            side=side,
-            time_in_force=TimeInForce.DAY
-        )
-        trading_client.submit_order(order)
-        action = "BUY" if diff > 0 else "SELL"
-        print(f"{action} {abs(int(diff))} shares of {symbol}")
+        current_value = current_qty * current_price
+        diff_value = target_value - current_value
+
+        # Only trade if the difference is meaningful (more than $5)
+        if abs(diff_value) < 5:
+            continue
+
+        if diff_value > 0:
+            # Buy more (using notional = dollar amount)
+            order = MarketOrderRequest(
+                symbol=symbol,
+                notional=round(diff_value, 2),
+                side=OrderSide.BUY,
+                time_in_force=TimeInForce.DAY
+            )
+            trading_client.submit_order(order)
+            print(f"BUY ${diff_value:.2f} of {symbol}")
+        else:
+            # Sell some
+            sell_qty = abs(diff_value) / current_price
+            order = MarketOrderRequest(
+                symbol=symbol,
+                qty=round(sell_qty, 4),
+                side=OrderSide.SELL,
+                time_in_force=TimeInForce.DAY
+            )
+            trading_client.submit_order(order)
+            print(f"SELL {sell_qty:.4f} shares of {symbol}")
 
     print("\nWeekly rebalance completed successfully.")
+
 
 # ============================================================
 # MAIN
