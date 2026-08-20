@@ -26,7 +26,7 @@ API_SECRET = os.getenv("ALPACA_SECRET_KEY")
 if not API_KEY or not API_SECRET:
     raise ValueError("Missing ALPACA_API_KEY or ALPACA_SECRET_KEY")
 
-PAPER = True   # Keep True for paper trading. Change to False only when ready for real money.
+PAPER = False   # Keep True for paper trading. Change to False only when ready for real money.
 
 # ============================================================
 # STRATEGY SETTINGS
