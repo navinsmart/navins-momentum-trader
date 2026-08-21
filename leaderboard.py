@@ -4,6 +4,7 @@ import pandas as pd
 import numpy as np
 import os
 from datetime import datetime, timedelta
+import plotly.express as px
 
 st.set_page_config(
     page_title="Momentum Rankings",
@@ -12,32 +13,16 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-# Mobile-friendly styling
 st.markdown("""
 <style>
-    .stApp {
-        max-width: 480px;
-        margin: auto;
-        padding-top: 1rem;
-    }
-    .big-number {
-        font-size: 28px;
-        font-weight: 700;
-        color: #00C853;
-    }
-    .card {
-        background: #1E1E1E;
-        padding: 16px;
-        border-radius: 12px;
-        margin-bottom: 16px;
-    }
+    .stApp { max-width: 500px; margin: auto; }
 </style>
 """, unsafe_allow_html=True)
 
 st.title("📈 Nasdaq-100 Momentum")
 st.caption("6-month momentum ranking")
 
-# ========== ALPACA PORTFOLIO SECTION ==========
+# ========== PORTFOLIO SECTION ==========
 st.subheader("Your Portfolio")
 
 API_KEY = os.getenv("ALPACA_API_KEY")
@@ -46,24 +31,21 @@ API_SECRET = os.getenv("ALPACA_SECRET_KEY")
 if API_KEY and API_SECRET:
     try:
         from alpaca.trading.client import TradingClient
-        client = TradingClient(API_KEY, API_SECRET, paper=False)  # Change to True if using paper
+        client = TradingClient(API_KEY, API_SECRET, paper=False)
         account = client.get_account()
         equity = float(account.equity)
         cash = float(account.cash)
-        
         col1, col2 = st.columns(2)
-        with col1:
-            st.metric("Account Equity", f"${equity:,.2f}")
-        with col2:
-            st.metric("Cash", f"${cash:,.2f}")
-    except Exception as e:
-        st.info("Could not load Alpaca account. Check your API keys.")
+        col1.metric("Account Equity", f"${equity:,.2f}")
+        col2.metric("Cash", f"${cash:,.2f}")
+    except:
+        st.info("Could not load Alpaca account.")
 else:
-    st.info("Add ALPACA_API_KEY and ALPACA_SECRET_KEY to see your portfolio.")
+    st.info("Add ALPACA_API_KEY and ALPACA_SECRET_KEY in Streamlit Secrets to see portfolio.")
 
 st.markdown("---")
 
-# ========== MOMENTUM LEADERBOARD ==========
+# ========== CURRENT RANKING ==========
 top_n = st.selectbox("Show Top", [5, 10, 15, 20], index=1)
 
 @st.cache_data(ttl=1800)
@@ -84,20 +66,21 @@ def get_nasdaq100():
     except:
         pass
     return ["AAPL","MSFT","NVDA","AMZN","META","GOOGL","AVGO","TSLA","COST","NFLX",
-            "AMD","ADBE","CSCO","INTC","AMAT","PANW","CRWD","FTNT","DDOG","TEAM"]
+            "AMD","ADBE","CSCO","INTC","AMAT","PANW","CRWD","FTNT","DDOG","TEAM",
+            "MU","STX","WDC","MRVL","LRCX","KLAC","SNPS","CDNS","NXPI","MCHP"]
 
 @st.cache_data(ttl=1800)
-def calculate_momentum(tickers):
+def get_price_data(tickers):
     end = datetime.now()
-    start = end - timedelta(days=250)
-    
+    start = end - timedelta(days=400)
     data = yf.download(tickers, start=start, end=end, auto_adjust=True, progress=False)["Close"]
-    data = data.dropna(axis=1, how="all")
-    
+    return data.dropna(axis=1, how="all")
+
+@st.cache_data(ttl=1800)
+def calculate_current_ranking(data, top_n):
     momentum = data.pct_change(periods=126).iloc[-1].dropna()
     last_price = data.iloc[-1]
     momentum = momentum[last_price.reindex(momentum.index) > 5.0]
-    
     ranked = momentum.sort_values(ascending=False)
     
     df = pd.DataFrame({
@@ -107,24 +90,72 @@ def calculate_momentum(tickers):
         "Price": last_price.reindex(ranked.index).round(2).values
     })
     df["Momentum"] = df["Momentum"].astype(str) + "%"
-    return df
+    return df, ranked.head(top_n).index.tolist()
 
-with st.spinner("Updating rankings..."):
+# ========== HISTORICAL RANK PERFORMANCE ==========
+@st.cache_data(ttl=1800)
+def calculate_historical_ranks(data, current_top_symbols, weeks=20):
+    weekly = data.resample("W-FRI").last()
+    records = []
+    
+    for i in range(weeks, 0, -1):
+        if i >= len(weekly):
+            continue
+        date = weekly.index[-i]
+        window = weekly.loc[:date]
+        if len(window) < 27:
+            continue
+        mom = window.pct_change(periods=26).iloc[-1].dropna()
+        mom = mom.sort_values(ascending=False)
+        rank_map = {sym: rank+1 for rank, sym in enumerate(mom.index)}
+        
+        for sym in current_top_symbols:
+            if sym in rank_map:
+                records.append({
+                    "Date": date,
+                    "Symbol": sym,
+                    "Rank": rank_map[sym]
+                })
+    
+    return pd.DataFrame(records)
+
+# Main
+with st.spinner("Loading data..."):
     tickers = get_nasdaq100()
-    ranking = calculate_momentum(tickers)
+    price_data = get_price_data(tickers)
+    ranking, top_symbols = calculate_current_ranking(price_data, top_n)
 
 st.subheader(f"Top {top_n} Stocks")
 st.dataframe(
     ranking.head(top_n),
     use_container_width=True,
-    hide_index=True,
-    column_config={
-        "Rank": st.column_config.NumberColumn(width="small"),
-        "Symbol": st.column_config.TextColumn(width="medium"),
-        "Momentum": st.column_config.TextColumn(width="medium"),
-        "Price": st.column_config.NumberColumn(format="$%.2f"),
-    }
+    hide_index=True
 )
 
 st.markdown("---")
-st.caption(f"Updated: {datetime.now().strftime('%Y-%m-%d %H:%M')}")
+st.subheader("Historical Rank Performance")
+st.caption("How the current top stocks ranked over the past 20 weeks (lower is better)")
+
+with st.spinner("Calculating historical ranks..."):
+    hist_df = calculate_historical_ranks(price_data, top_symbols, weeks=20)
+
+if not hist_df.empty:
+    fig = px.line(
+        hist_df,
+        x="Date",
+        y="Rank",
+        color="Symbol",
+        markers=True,
+        title="Historical Rank Performance"
+    )
+    fig.update_yaxes(autorange="reversed")  # Rank 1 at the top
+    fig.update_layout(
+        height=450,
+        legend=dict(orientation="h", yanchor="bottom", y=-0.4),
+        margin=dict(l=10, r=10, t=40, b=10)
+    )
+    st.plotly_chart(fig, use_container_width=True)
+else:
+    st.info("Not enough historical data to build the chart.")
+
+st.caption(f"Last updated: {datetime.now().strftime('%Y-%m-%d %H:%M')}")
