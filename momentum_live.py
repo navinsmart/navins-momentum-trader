@@ -38,7 +38,7 @@ VOL_LOOKBACK = 63
 TARGET_PORTFOLIO_VOL = 0.12
 MAX_POSITION_WEIGHT = 0.15
 MIN_PRICE = 5.0
-CASH_BUFFER = 0.02
+CASH_BUFFER = 0.00
 
 # ============================================================
 # GET NASDAQ-100 LIST
