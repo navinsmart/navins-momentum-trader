@@ -15,14 +15,74 @@ st.set_page_config(
 
 st.markdown("""
 <style>
-    .stApp { max-width: 500px; margin: auto; }
+    .stApp { max-width: 520px; margin: auto; }
+    .status-healthy {
+        background-color: #d4edda;
+        color: #155724;
+        padding: 12px;
+        border-radius: 8px;
+        font-weight: bold;
+        text-align: center;
+    }
+    .status-cash {
+        background-color: #f8d7da;
+        color: #721c24;
+        padding: 12px;
+        border-radius: 8px;
+        font-weight: bold;
+        text-align: center;
+    }
 </style>
 """, unsafe_allow_html=True)
 
 st.title("📈 Nasdaq-100 Momentum")
-st.caption("6-month momentum ranking")
+st.caption("6-month momentum ranking + Crash Protection")
 
-# ========== PORTFOLIO SECTION ==========
+# ============================================================
+# MARKET FILTER STATUS
+# ============================================================
+st.subheader("Market Filter Status")
+
+@st.cache_data(ttl=300)
+def get_market_status():
+    data = yf.download("QQQ", period="1y", auto_adjust=True, progress=False)
+    close = data["Close"]
+    if isinstance(close, pd.DataFrame):
+        close = close.iloc[:, 0]
+
+    current = float(close.iloc[-1])
+    ma100 = float(close.rolling(100).mean().iloc[-1])
+    ma55 = float(close.rolling(55).mean().iloc[-1])
+
+    return current, ma100, ma55
+
+try:
+    qqq_price, ma100, ma55 = get_market_status()
+
+    col1, col2, col3 = st.columns(3)
+    col1.metric("QQQ Price", f"${qqq_price:.2f}")
+    col2.metric("100-day MA (Exit)", f"${ma100:.2f}")
+    col3.metric("55-day MA (Re-entry)", f"${ma55:.2f}")
+
+    # Simple status logic for display
+    if qqq_price > ma100:
+        st.markdown('<div class="status-healthy">✅ HEALTHY – Invested Mode</div>', unsafe_allow_html=True)
+        st.caption("QQQ is above 100-day MA → Robot is allowed to hold stocks")
+    elif qqq_price > ma55:
+        st.markdown('<div class="status-healthy">🟡 WATCH – Between 55 & 100 MA</div>', unsafe_allow_html=True)
+        st.caption("QQQ is between 55-day and 100-day MA")
+    else:
+        st.markdown('<div class="status-cash">🛡️ CASH MODE – Protection Active</div>', unsafe_allow_html=True)
+        st.caption("QQQ is below 55-day MA → Robot stays in cash")
+
+except Exception as e:
+    st.warning("Could not load market filter data.")
+
+st.markdown("---")
+
+# ============================================================
+# PORTFOLIO SECTION
+# ============================================================
 st.subheader("Your Portfolio")
 
 API_KEY = os.getenv("ALPACA_API_KEY")
@@ -45,7 +105,9 @@ else:
 
 st.markdown("---")
 
-# ========== CURRENT RANKING ==========
+# ============================================================
+# CURRENT RANKING
+# ============================================================
 top_n = st.selectbox("Show Top", [5, 10, 15, 20], index=1)
 
 @st.cache_data(ttl=1800)
@@ -67,7 +129,7 @@ def get_nasdaq100():
         pass
     return ["AAPL","MSFT","NVDA","AMZN","META","GOOGL","AVGO","TSLA","COST","NFLX",
             "AMD","ADBE","CSCO","INTC","AMAT","PANW","CRWD","FTNT","DDOG","TEAM",
-            "MU","STX","WDC","MRVL","LRCX","KLAC","SNPS","CDNS","NXPI","MCHP"]
+            "MU","STX","WDC","MRVL","LRCX","KLAC","SNPS","CDNS"]
 
 @st.cache_data(ttl=1800)
 def get_price_data(tickers):
@@ -82,7 +144,7 @@ def calculate_current_ranking(data, top_n):
     last_price = data.iloc[-1]
     momentum = momentum[last_price.reindex(momentum.index) > 5.0]
     ranked = momentum.sort_values(ascending=False)
-    
+
     df = pd.DataFrame({
         "Rank": range(1, len(ranked)+1),
         "Symbol": ranked.index,
@@ -92,12 +154,11 @@ def calculate_current_ranking(data, top_n):
     df["Momentum"] = df["Momentum"].astype(str) + "%"
     return df, ranked.head(top_n).index.tolist()
 
-# ========== HISTORICAL RANK PERFORMANCE ==========
 @st.cache_data(ttl=1800)
 def calculate_historical_ranks(data, current_top_symbols, weeks=20):
     weekly = data.resample("W-FRI").last()
     records = []
-    
+
     for i in range(weeks, 0, -1):
         if i >= len(weekly):
             continue
@@ -108,7 +169,7 @@ def calculate_historical_ranks(data, current_top_symbols, weeks=20):
         mom = window.pct_change(periods=26).iloc[-1].dropna()
         mom = mom.sort_values(ascending=False)
         rank_map = {sym: rank+1 for rank, sym in enumerate(mom.index)}
-        
+
         for sym in current_top_symbols:
             if sym in rank_map:
                 records.append({
@@ -116,7 +177,7 @@ def calculate_historical_ranks(data, current_top_symbols, weeks=20):
                     "Symbol": sym,
                     "Rank": rank_map[sym]
                 })
-    
+
     return pd.DataFrame(records)
 
 # Main
@@ -148,7 +209,7 @@ if not hist_df.empty:
         markers=True,
         title="Historical Rank Performance"
     )
-    fig.update_yaxes(autorange="reversed")  # Rank 1 at the top
+    fig.update_yaxes(autorange="reversed")
     fig.update_layout(
         height=450,
         legend=dict(orientation="h", yanchor="bottom", y=-0.4),
