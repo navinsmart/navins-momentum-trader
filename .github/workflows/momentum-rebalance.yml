@@ -1,9 +1,9 @@
 name: Momentum Portfolio Rebalance
 
 on:
-  # Runs every Monday at 20:15 UTC (after US market close)
+   # Runs every Friday at 20:30 UTC (≈ 4:30 PM Eastern Time)
   schedule:
-    - cron: '15 20 * * 1'   # Every Monday
+    - cron: '30 20 * * 5'
 
   # Allows manual run anytime
   workflow_dispatch:
