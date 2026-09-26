@@ -220,82 +220,111 @@ def calculate_target_weights():
 # REBALANCE
 # ============================================================
 def rebalance():
-   print(f"\n[{datetime.now()}] Starting weekly rebalance...")
-   equity = get_account_equity()
-   print(f"Account equity: ${equity:,.2f}")
+    print(f"\n[{datetime.now()}] Starting Nasdaq-100 rebalance...")
+    equity = get_account_equity()
+    print(f"Account equity: ${equity:,.2f}")
 
-   # ----- CRASH PROTECTION -----
-   if not is_market_healthy():
-       sell_everything()
-       print("Market filter triggered → staying in cash.")
-       return
+    if not is_market_healthy():
+        sell_everything()
+        print("Market filter → staying in cash.")
+        return
 
-   targets = calculate_target_weights()
-   if not targets:
-       print("No targets generated.")
-       return
+    targets = calculate_target_weights()
+    if not targets:
+        print("No targets generated.")
+        return
 
-   print("\nTarget weights:")
-   for symbol, weight in sorted(targets.items(), key=lambda x: -x[1]):
-       print(f"  {symbol}: {weight:.1%}")
+    print("\nTarget weights:")
+    for symbol, weight in sorted(targets.items(), key=lambda x: -x[1]):
+        print(f"  {symbol}: {weight:.1%}")
 
-   current_positions = get_current_positions()
-   all_symbols = list(set(list(targets.keys()) + list(current_positions.keys())))
-   prices = get_latest_prices(all_symbols)
+    current_positions = get_current_positions()
+    all_symbols = list(set(list(targets.keys()) + list(current_positions.keys())))
+    prices = get_latest_prices(all_symbols)
+    target_dollars = {s: equity * w for s, w in targets.items()}
 
-   target_dollars = {symbol: equity * weight for symbol, weight in targets.items()}
+    # 1. Close positions that are no longer in the target
+    for symbol, qty in current_positions.items():
+        if symbol not in target_dollars and abs(qty) > 0:
+            try:
+                side = OrderSide.SELL if qty > 0 else OrderSide.BUY
+                order = MarketOrderRequest(
+                    symbol=symbol,
+                    qty=abs(qty),
+                    side=side,
+                    time_in_force=TimeInForce.DAY
+                )
+                trading_client.submit_order(order)
+                print(f"Closing {symbol}")
+            except Exception as e:
+                print(f"Failed to close {symbol}: {e}")
 
-   # Close unwanted positions
-   for symbol, qty in current_positions.items():
-       if symbol not in target_dollars and abs(qty) > 0:
-           side = OrderSide.SELL if qty > 0 else OrderSide.BUY
-           order = MarketOrderRequest(
-               symbol=symbol,
-               qty=abs(qty),
-               side=side,
-               time_in_force=TimeInForce.DAY
-           )
-           trading_client.submit_order(order)
-           print(f"Closing {symbol}")
+    time.sleep(3)  # let sells settle
 
-   time.sleep(2)
+    # Refresh after sells
+    current_positions = get_current_positions()
+    account = trading_client.get_account()
+    buying_power = float(account.buying_power)
+    print(f"Buying power after sells: ${buying_power:,.2f}")
 
-   # Adjust positions
-   current_positions = get_current_positions()
-   for symbol, target_value in target_dollars.items():
-       current_qty = current_positions.get(symbol, 0)
-       current_price = prices.get(symbol, 0)
+    # 2. Rebalance remaining positions
+    for symbol, target_value in target_dollars.items():
+        current_qty = current_positions.get(symbol, 0.0)
+        current_price = prices.get(symbol, 0.0)
+        if current_price <= 0:
+            print(f"Skipping {symbol}: no valid price")
+            continue
 
-       if current_price <= 0:
-           continue
+        current_value = current_qty * current_price
+        diff = target_value - current_value
 
-       current_value = current_qty * current_price
-       diff_value = target_value - current_value
+        if abs(diff) < 5:  # ignore tiny diffs
+            continue
 
-       if abs(diff_value) < 5:
-           continue
+        try:
+            if diff > 0:  # BUY
+                if diff > buying_power:
+                    print(f"Skipping BUY ${diff:.2f} of {symbol} "
+                          f"(only ${buying_power:.2f} buying power left)")
+                    continue
 
-       if diff_value > 0:
-           order = MarketOrderRequest(
-               symbol=symbol,
-               notional=round(diff_value, 2),
-               side=OrderSide.BUY,
-               time_in_force=TimeInForce.DAY
-           )
-           trading_client.submit_order(order)
-           print(f"BUY ${diff_value:.2f} of {symbol}")
-       else:
-           sell_qty = abs(diff_value) / current_price
-           order = MarketOrderRequest(
-               symbol=symbol,
-               qty=round(sell_qty, 4),
-               side=OrderSide.SELL,
-               time_in_force=TimeInForce.DAY
-           )
-           trading_client.submit_order(order)
-           print(f"SELL {sell_qty:.4f} shares of {symbol}")
+                order = MarketOrderRequest(
+                    symbol=symbol,
+                    notional=round(diff, 2),
+                    side=OrderSide.BUY,
+                    time_in_force=TimeInForce.DAY
+                )
+                trading_client.submit_order(order)
+                print(f"BUY ${diff:.2f} of {symbol}")
+                buying_power -= diff
 
-   print("\nWeekly rebalance completed successfully.")
+            else:  # SELL
+                qty_to_sell = abs(diff) / current_price
+                qty_to_sell = min(qty_to_sell, abs(current_qty))
+                if qty_to_sell < 0.0001:
+                    continue
+
+                order = MarketOrderRequest(
+                    symbol=symbol,
+                    qty=round(qty_to_sell, 4),
+                    side=OrderSide.SELL,
+                    time_in_force=TimeInForce.DAY
+                )
+                trading_client.submit_order(order)
+                print(f"SELL {qty_to_sell:.4f} of {symbol}")
+
+        except Exception as e:
+            print(f"Order failed for {symbol}: {e}")
+            # continue instead of crashing
+
+    print("\nRebalance completed.")
+      
+
+  
+
+   
+       
+  
 
 # ============================================================
 # MAIN
